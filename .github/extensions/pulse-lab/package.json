@@ -1,0 +1,25 @@
+{
+  "name": "pulse-lab",
+  "version": "1.0.0",
+  "description": "A simulation-only blood-pressure canvas shared by humans and Copilot.",
+  "type": "module",
+  "main": "extension.mjs",
+  "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "files": [
+    "extension.mjs",
+    "canvas.mjs",
+    "simulation.mjs",
+    "public"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check extension.mjs && node --check canvas.mjs && node --check simulation.mjs && node --check public/app.js"
+  },
+  "keywords": ["copilot-canvas", "simulation", "demo"],
+  "devDependencies": {
+    "@github/copilot-sdk": "1.0.34"
+  }
+}

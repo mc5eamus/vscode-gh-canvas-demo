@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pulse Lab · simulation only</title>
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">Copilot Canvas / fictional device bench</p>
+      <h1>Pulse Lab <span class="badge">SIMULATION ONLY</span></h1>
+      <p>One shared surface. You operate the controls; Copilot sees the same state.</p>
+    </header>
+    <aside class="notice">
+      Synthetic data only. Not a medical device, diagnostic tool, or medical advice.
+      No patient data or real hardware.
+    </aside>
+    <p id="connection" role="status">Connecting to the canvas host…</p>
+    <section class="panel" aria-labelledby="controls-title">
+      <h2 id="controls-title">Device controls</h2>
+      <div class="controls">
+        <label for="scenario">Scenario</label>
+        <select id="scenario" disabled>
+          <option value="steady">Steady</option>
+          <option value="elevated">Elevated</option>
+          <option value="motion">Motion artifact</option>
+        </select>
+        <button id="measure" disabled>Simulate reading</button>
+        <button id="reset" class="secondary" disabled>Reset</button>
+      </div>
+      <p id="error" role="alert"></p>
+      <p id="last-action" role="status">Ready for a synthetic reading.</p>
+    </section>
+    <section class="panel" aria-labelledby="reading-title">
+      <h2 id="reading-title">Latest synthetic attempt</h2>
+      <div class="metrics" aria-live="polite">
+        <div><span class="metric" id="pressure">— / —</span><span>mmHg · blood pressure</span></div>
+        <div><span class="metric" id="pulse">—</span><span>bpm · pulse</span></div>
+      </div>
+      <p id="result">No readings yet. Choose a scenario to begin.</p>
+    </section>
+    <section class="panel" aria-labelledby="history-title">
+      <h2 id="history-title">Shared history <span id="count">0 attempts</span></h2>
+      <p>Last ten attempts, newest first. The agent can inspect this exact state.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Attempt</th><th scope="col">Scenario</th><th scope="col">Synthetic result</th><th scope="col">By</th></tr></thead>
+          <tbody id="history"></tbody>
+        </table>
+      </div>
+    </section>
+    <footer>Try in chat: “Inspect Pulse Lab, select elevated, and simulate a reading.”</footer>
+  </main>
+</body>
+</html>
