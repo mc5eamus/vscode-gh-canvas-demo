@@ -1,5 +1,5 @@
 const element = (id) => document.getElementById(id);
-const controls = [element("scenario"), element("measure"), element("reset")];
+const controls = [element("scenario"), element("measure"), element("reset"), element("ask-copilot")];
 let connected = false;
 let busy = false;
 let currentState;
@@ -36,21 +36,31 @@ function render(state) {
   }));
 }
 
-async function act(action, input = {}) {
+async function request(route, body) {
+  if (!connected || busy) return;
   busy = true;
   updateControls();
   element("error").textContent = "";
+  const isChat = route === "chat";
+  if (isChat) element("chat-status").textContent = "Sending to Copilot chat…";
   try {
-    const response = await fetch("./action", {
+    const response = await fetch(`./${route}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, input }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(10000),
     });
-    if (!response.ok) throw new Error(`Host rejected the action (${response.status}).`);
+    if (!response.ok) {
+      const result = await response.json();
+      throw new Error(result.error ?? `Host rejected the request (${response.status}).`);
+    }
+    if (isChat) element("chat-status").textContent = (await response.json()).message;
     // SSE is authoritative, so an older HTTP response cannot overwrite a newer agent action.
   } catch (error) {
-    element("error").textContent = `${error.message} Check the connection before retrying.`;
+    if (isChat) element("chat-status").textContent = "";
+    element("error").textContent = `${error.message} ${isChat
+      ? "Check Copilot chat before retrying to avoid duplicate messages."
+      : "Check the connection before retrying."}`;
     if (currentState) render(currentState);
   } finally {
     busy = false;
@@ -58,11 +68,13 @@ async function act(action, input = {}) {
   }
 }
 
+const act = (action, input = {}) => request("action", { action, input });
 element("scenario").addEventListener("change", (event) => {
   void act("set_scenario", { scenario: event.target.value });
 });
 element("measure").addEventListener("click", () => { void act("take_reading"); });
 element("reset").addEventListener("click", () => { void act("reset"); });
+element("ask-copilot").addEventListener("click", () => { void request("chat", {}); });
 
 const events = new EventSource("./events");
 events.addEventListener("state", (event) => {

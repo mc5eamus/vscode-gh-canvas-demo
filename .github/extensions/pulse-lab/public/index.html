@@ -52,7 +52,19 @@
         </table>
       </div>
     </section>
-    <footer>Try in chat: “Inspect Pulse Lab, select elevated, and simulate a reading.”</footer>
+    <section class="panel" aria-labelledby="copilot-title">
+      <h2 id="copilot-title">Copilot chat ↔ canvas</h2>
+      <p><strong>Chat → canvas:</strong> In Copilot chat, ask “In Pulse Lab, select elevated
+        and simulate a reading.” Watch the controls and history update here.</p>
+      <p><strong>Canvas → chat:</strong> Send the current synthetic snapshot to Copilot
+        with a fixed request to summarize the scenario, attempt count, and latest result.
+        No medical interpretation or canvas changes are requested.</p>
+      <button id="ask-copilot" disabled>Ask Copilot to summarize</button>
+      <p id="chat-status" role="status"></p>
+      <p>The button sends a message to this canvas's Copilot session. If chat is busy,
+        it queues the request without interrupting. Read the reply in chat.</p>
+    </section>
+    <footer>Simulation only. No patient data, real hardware, or medical advice.</footer>
   </main>
 </body>
 </html>

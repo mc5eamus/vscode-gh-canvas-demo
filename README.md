@@ -9,7 +9,7 @@ enter patient data or connect real hardware.
 
 | Idea | Human interaction | Agent interaction |
 | --- | --- | --- |
-| **Pulse Lab — implemented here** | Choose a scenario, simulate a reading, reset | Change the scenario, take readings, inspect shared history |
+| **Pulse Lab — implemented here** | Choose a scenario, simulate a reading, reset, ask Copilot from the canvas | Change the scenario, take readings, inspect shared history, summarize a canvas snapshot in chat |
 | Fictional pulse-oximeter bench | Adjust a simulated signal-quality control | Compare synthetic traces and explain UI changes |
 | Equipment readiness board | Move fictional devices between inspection stages | Update checklists and summarize remaining demo tasks |
 
@@ -65,11 +65,54 @@ or hardware access.
    a simulated error, not a valid reading. Ask the agent to inspect that result.
 6. Ask the agent to reset the demo. The canvas should return to Steady with no
    history. Also try Reset in the UI, then have the agent confirm the empty state.
+7. Select **Ask Copilot to summarize** in the canvas, then switch to chat. A new
+   request and Copilot's summary should appear without typing a chat message.
+   The empty history should be reported as no readings, not an invented result.
 
 Both entry points use the same host-owned state; changing browser-only controls
 is not sufficient to demonstrate agent collaboration. State is in memory, scoped
 to the open canvas instance, with a bounded recent history. A newly opened
 instance or restarted host starts fresh. This demo does not export patient files.
+
+### Scenario 1: control the canvas from Copilot chat
+
+With Pulse Lab open, send this in the **same Copilot session**:
+
+```text
+In Pulse Lab, select the elevated scenario and simulate a reading.
+Then inspect the state. Describe only the synthetic result, not a medical finding.
+```
+
+Copilot uses `set_scenario`, `take_reading`, and `get_state`. The open canvas
+should select Elevated, show **146 / 92 mmHg** and **84 bpm**, and add a history
+row marked **agent**, without a refresh. Ask **“Reset Pulse Lab”** and verify
+Steady, zero attempts, and an empty history. These are real shared-state actions,
+not instructions for the user to click the controls.
+
+### Scenario 2: control Copilot chat from the canvas
+
+1. In the canvas, choose **Motion artifact** and select **Simulate reading**.
+2. Select **Ask Copilot to summarize** in the **Copilot chat ↔ canvas** panel.
+   This explicitly sends a fixed summary request plus this instance's synthetic
+   snapshot to its joined Copilot session; no chat typing or copy/paste is needed.
+3. Wait for **Sent to Copilot chat**, then switch to chat. Copilot should report
+   the scenario, attempt count, and simulated motion error—not invent a reading
+   or offer medical advice. The request asks for a summary, not state changes.
+4. Reset the canvas and press the button again to demonstrate the no-readings
+   case. You can also try Steady or Elevated for a fixed synthetic result.
+
+The button uses `session.send({ prompt, mode: "enqueue" })`: a busy chat queues the
+request rather than being interrupted. “Sent” confirms submission, not completion
+of Copilot's response. The snapshot is captured by the host when it receives the
+button request; later canvas changes do not alter that message. With multiple
+instances open, the message identifies its source instance.
+
+Opening the canvas, changing controls, receiving live updates, and invoking
+agent actions never send chat messages automatically. There is no free-form
+prompt or patient-data input. While submitting, controls are disabled to prevent
+double-clicks. If delivery fails or times out, check chat before retrying: a
+message may already have arrived. Reopen Pulse Lab in a supported Copilot
+session if chat is unavailable.
 
 ## Demonstrate canvas creation
 
@@ -124,6 +167,8 @@ requires a connected, supported **remote Agent Host**.
 6. Repeat the local presentation: click **Simulate reading** in the client,
    ask the remote agent to inspect it, and have the remote agent change the
    scenario and simulate another reading. Check that the same canvas updates.
+   Then select **Ask Copilot to summarize** and verify the reply appears in that
+   remote session's chat, not a separate local session.
 7. Close only the canvas tab, then reopen the **Running** canvas from the canvas
    menu to demonstrate returning to the same instance. A new instance is a fresh
    simulation, not persisted history.
@@ -187,6 +232,8 @@ ends; workspace extensions are managed by the repository.
 | Pulse Lab missing | Check the selected workspace/host, extension source folder, and extension load errors |
 | Remote canvas fails to display | Use desktop Agents window, enable remote proxy, verify host connection and extension availability there |
 | Only a browser page opens | That is not proof of canvas discovery or bidirectional agent interaction |
+| Canvas cannot send to chat | Open it in a supported Copilot session; check chat before retrying a failed or timed-out send |
+| “Sent” appears but no reply yet | Switch to the canvas's session chat; the request may be queued behind ongoing work |
 | State appears to reset | Check whether a new canvas instance or host was started |
 | Packaged copy differs | Check for duplicate user/workspace installs and compare the reviewed package version |
 
@@ -208,13 +255,16 @@ The pinned SDK is a **development dependency** for checking the real
 SDK. Tests use Node's built-in runner—no additional test framework or linter.
 They exercise synthetic scenarios, invalid inputs, bounded history, instance
 isolation/cleanup, SDK metadata, HTTP protections, and live SSE updates shared
-between browser requests and agent-action handlers. They do **not** substitute
-for validating canvas discovery or a remote connection in VS Code.
+between browser requests and agent-action handlers. Canvas-to-chat tests inject
+a fake message sender to verify instance-scoped snapshots, explicit sends only,
+request validation, unavailable chat, concurrent submissions, and send failures.
+They do **not** substitute for validating real chat delivery, canvas discovery,
+or a remote connection in VS Code.
 
 | File in the extension | Responsibility |
 | --- | --- |
-| `extension.mjs` | Register with `joinSession({ canvases: [createCanvas(...)] })` |
-| `canvas.mjs` | Per-instance loopback server, lifecycle, actions, and live state stream |
+| `extension.mjs` | Register the canvas with `joinSession` and forward explicit messages to that session |
+| `canvas.mjs` | Per-instance loopback server, lifecycle, actions, live state stream, and fixed chat requests |
 | `simulation.mjs` | Shared deterministic simulation and ten-attempt history |
 | `public/` | Accessible controls and rendering; relative URLs support the remote proxy |
 | `test/canvas.test.mjs` | Built-in Node unit/integration checks |
@@ -224,6 +274,8 @@ Agent actions are `get_state`, `set_scenario` (input `scenario`: `steady`,
 input. Both humans and agents call the same dispatcher. Each instance has its
 own unguessable URL, localhost-only listener, no CORS access, bounded request
 bodies, and restrictive content security policy. No free-form HTML is rendered.
+The browser-only `POST chat` endpoint accepts an empty JSON object and constructs
+the summary prompt from host-owned state; it is not an agent-callable action.
 No hooks, sensitive environment variables, or automatic agent prompts are used.
 
 ### References
