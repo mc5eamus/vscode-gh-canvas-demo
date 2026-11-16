@@ -10,6 +10,7 @@ enter patient data or connect real hardware.
 | Idea | Human interaction | Agent interaction |
 | --- | --- | --- |
 | **Pulse Lab — implemented here** | Choose a scenario, simulate a reading, reset, ask Copilot from the canvas | Change the scenario, take readings, inspect shared history, summarize a canvas snapshot in chat |
+| **[Local sandbox probe — implemented here](#demonstrate-local-agent-sandboxing)** | Prepare a disposable outside-workspace folder and compare artifacts | Run the same file-writing task under the local terminal sandbox; workspace write succeeds, outside write is blocked |
 | Fictional pulse-oximeter bench | Adjust a simulated signal-quality control | Compare synthetic traces and explain UI changes |
 | Equipment readiness board | Move fictional devices between inspection stages | Update checklists and summarize remaining demo tasks |
 
@@ -113,6 +114,133 @@ prompt or patient-data input. While submitting, controls are disabled to prevent
 double-clicks. If delivery fails or times out, check chat before retrying: a
 message may already have arrived. Reopen Pulse Lab in a supported Copilot
 session if chat is unavailable.
+
+## Demonstrate local agent sandboxing
+
+**Scenario:** an agent generates a synthetic artifact in the workspace, then tries
+to write a second copy outside it. Without isolation, both writes succeed. With
+the outside directory configured read-only, only the workspace write succeeds.
+This is a separate terminal demo, not a canvas or simulated permission toggle.
+VS Code enforces the sandbox; `demos/local-sandbox.mjs` only measures file writes.
+It never reads personal files, overwrites existing files, launches commands, or
+uses the network. Every run uses new artifact names.
+
+### Prerequisites and safe setup
+
+- Use a local **Copilot harness** session with its default terminal tool, Node.js
+  22.12+, and a VS Code build supporting
+  [agent sandboxing](https://code.visualstudio.com/docs/agents/run/agent-sandboxing).
+  The similarly named **Local harness** has different sandbox controls.
+- This walkthrough uses a POSIX shell on macOS 15+ or supported glibc Linux/WSL2.
+  Linux requires `bubblewrap`, `slirp4netns`, util-linux, compatible `iptables`,
+  and permission to create the required namespaces. See the linked prerequisites;
+  WSL1 and Alpine/musl are unsupported by this VS Code sandbox runtime.
+- Use a disposable checkout, not a sensitive workspace. Do not relax an
+  organization policy to run this demo. Ordinary terminal approval is not
+  sandboxing, and an agent refusing a command is not proof of OS isolation.
+
+In a **human-operated, ordinary terminal** at the repository root, prepare a
+fresh fixture and run the unisolated control:
+
+```bash
+repo="$(pwd -P)"
+outside="$(mktemp -d "$HOME/copilot-sandbox-demo.XXXXXX")"
+outside="$(cd "$outside" && pwd -P)"
+printf 'Workspace: %s\nOutside fixture: %s\n' "$repo" "$outside"
+node "$repo/demos/local-sandbox.mjs" "$outside" unisolated
+ls -la "$outside"
+```
+
+Keep this terminal open for verification and cleanup. The fixture must be
+outside the checkout, not its parent. Do not use a real configuration directory
+or `/tmp` as the presentation target: temporary paths can have special grants.
+Expect `workspace.status: "written"`, `outside.status: "written"`, and
+`passed: true`. The printed paths contain only the fixed synthetic text.
+
+### Run the same task with isolation
+
+1. Save your current sandbox settings, then configure the following on the
+   **local execution host**. Replace the placeholder with the exact absolute
+   fixture path printed above; shell variables such as `$outside` do not expand
+   in settings JSON. Preserve existing path restrictions when merging settings.
+
+   ```json
+   {
+     "chat.agent.sandbox.enabled": "on",
+     "chat.agent.sandbox.allowUnsandboxedCommands": false,
+     "chat.agent.sandbox.network.allowNetwork": false,
+     "chat.agent.sandbox.fileSystem.userConfiguredPaths": {
+       "readwritePaths": [],
+       "readonlyPaths": ["/absolute/path/to/copilot-sandbox-demo.XXXXXX"],
+       "deniedPaths": []
+     }
+   }
+   ```
+
+2. Start a **new Copilot harness session** in this checkout. Run `/sandbox policy`
+   and verify sandboxing is active, the workspace is writable, and the fixture
+   is read-only. The explicit read-only rule avoids relying on default
+   outside-workspace restrictions. Do not use a denied/unreadable fixture: the
+   probe must be able to validate that it exists before attempting the write.
+3. Ask the agent, substituting both absolute paths:
+
+   ```text
+   Demonstrate the local sandbox using only our disposable fixture.
+   Use the default terminal tool, with /absolute/path/to/checkout as the working
+   directory, to run:
+   node "/absolute/path/to/checkout/demos/local-sandbox.mjs" "/absolute/path/to/copilot-sandbox-demo.XXXXXX" isolated
+   Report the two write statuses, the OS error code, and passed.
+   Do not modify the probe, change permissions, use another tool to write the
+   files, or retry outside the sandbox. A blocked outside write is expected.
+   ```
+
+4. Expect a new workspace artifact, `outside.status: "blocked"`, an error such
+   as `EACCES`, `EPERM`, or `EROFS`, and `passed: true`. In your original ordinary
+   terminal, inspect the printed workspace artifact and run `ls -la "$outside"`
+   again: the unisolated artifact remains, but the isolated attempt added none.
+
+| Run | Workspace write | Outside write | Result |
+| --- | --- | --- | --- |
+| Ordinary terminal, `unisolated` | Written | Written | Pass |
+| Sandboxed agent terminal, `isolated` | Written | Blocked | Pass |
+| Sandbox missing or misconfigured, `isolated` | Written | Written | **Fail**, exit 1 |
+
+The last argument asserts the expected outcome; it does not enable or disable
+isolation. The actual write is always attempted. Missing paths, invalid setup,
+and non-permission errors fail rather than masquerading as a successful block.
+If Node cannot start, the workspace write fails, or the agent never runs the
+command, that is not a successful demonstration. Check prerequisites and
+`/sandbox policy`; do not approve an unsandboxed fallback.
+
+The comparison proves a file-write restriction for this terminal process and
+its children, not isolation of every agent tool, all home-directory reads, or
+network traffic. Network is disabled in the example policy, but is not probed.
+Do not run an untrusted payload as the unisolated control.
+
+### Cleanup and checks
+
+After the demo, remove only its artifacts from the original ordinary terminal:
+
+```bash
+rm -f -- "$outside"/sandbox-probe-*.txt "$repo"/.sandbox-demo-*/artifact.txt
+rmdir -- "$outside" "$repo"/.sandbox-demo-*/
+```
+
+`rmdir` refuses to remove nonempty directories; inspect unexpected contents
+instead of using recursive deletion. Restore your previous sandbox settings,
+remove the fixture-specific rule, and close the demo session. Workspace output
+directories are gitignored; no fixture or sandbox policy is committed.
+
+Run the focused checks without installing dependencies:
+
+```bash
+node --check "$repo/demos/local-sandbox.mjs"
+node --test "$repo/demos/local-sandbox.test.mjs"
+```
+
+These tests cover the unisolated task, repeatability, invalid fixtures, and
+denial handling using Node's permission model. That model is **not** a substitute
+for the OS sandbox; perform the VS Code walkthrough on the presentation machine.
 
 ## Demonstrate canvas creation
 
@@ -248,6 +376,7 @@ From the repository root:
 npm --prefix .github/extensions/pulse-lab ci --ignore-scripts
 npm --prefix .github/extensions/pulse-lab run check
 npm --prefix .github/extensions/pulse-lab test
+node --test "$(pwd -P)/demos/local-sandbox.test.mjs"
 ```
 
 The pinned SDK is a **development dependency** for checking the real
