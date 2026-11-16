@@ -17,9 +17,10 @@ const actions = [
   ["reset", "Clear this instance's synthetic history and restore the steady scenario.", {}],
 ];
 
-async function startInstance() {
+async function startInstance(instanceId, sendMessage) {
   const dispatch = createSimulation();
   const clients = new Set();
+  let sendingToChat = false;
   // An unguessable URL scopes browser access without exposing a public port.
   const prefix = `/${randomBytes(24).toString("hex")}/`;
   const send = (res, state) => res.write(`event: state\ndata: ${JSON.stringify(state)}\n\n`);
@@ -60,7 +61,7 @@ async function startInstance() {
         res.on("close", () => clients.delete(res));
         return;
       }
-      if (req.method === "POST" && route === "action") {
+      if (req.method === "POST" && (route === "action" || route === "chat")) {
         if (req.headers["content-type"] !== "application/json") {
           return reply(415, { error: "Expected application/json." });
         }
@@ -69,7 +70,33 @@ async function startInstance() {
           body += chunk.toString();
           if (Buffer.byteLength(body) > 1024) return reply(413, { error: "Request too large." });
         }
-        const { action, input } = JSON.parse(body);
+        const request = JSON.parse(body);
+        if (route === "chat") {
+          if (!request || typeof request !== "object" || Array.isArray(request)
+            || Object.keys(request).length !== 0) {
+            return reply(400, { error: "Chat accepts only an empty object, not a custom prompt." });
+          }
+          if (!sendMessage) return reply(503, { error: "Copilot chat is unavailable. Open Pulse Lab in a Copilot session." });
+          if (sendingToChat) return reply(409, { error: "A request is already being sent to Copilot chat." });
+          sendingToChat = true;
+          try {
+            const state = dispatch("get_state");
+            await sendMessage({
+              prompt: `Summarize this synthetic Pulse Lab snapshot from canvas instance ${JSON.stringify(instanceId)} in chat. `
+                + "Report the selected scenario, attempt count, and latest result (or no readings yet). "
+                + "Explain any motion error only as simulated device behavior. "
+                + "This is not patient data. Do not diagnose, give medical advice, modify files, or change canvas state.\n\n"
+                + JSON.stringify(state),
+              mode: "enqueue",
+            });
+            return reply(202, { message: "Sent to Copilot chat. Switch to chat to see the response." });
+          } catch {
+            return reply(502, { error: "Could not confirm delivery to Copilot chat." });
+          } finally {
+            sendingToChat = false;
+          }
+        }
+        const { action, input } = request;
         return reply(200, invoke(action, input, "human"));
       }
       reply(404, { error: "Not found." });
@@ -101,7 +128,7 @@ async function startInstance() {
   };
 }
 
-export function createPulseLab() {
+export function createPulseLab({ sendMessage } = {}) {
   const instances = new Map();
   const close = async (instanceId) => {
     const pending = instances.get(instanceId);
@@ -129,7 +156,7 @@ export function createPulseLab() {
         },
       })),
       async open({ instanceId }) {
-        if (!instances.has(instanceId)) instances.set(instanceId, startInstance());
+        if (!instances.has(instanceId)) instances.set(instanceId, startInstance(instanceId, sendMessage));
         let instance;
         try {
           instance = await instances.get(instanceId);

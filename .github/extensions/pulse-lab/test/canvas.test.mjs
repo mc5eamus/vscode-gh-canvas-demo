@@ -68,7 +68,7 @@ test("SDK declaration and instance lifecycle preserve focus and isolate state", 
   assert.equal((await invoke("get_state", "one")).attempts, 0);
 });
 
-test("browser actions and agent actions share state and stream live updates", { timeout: 10000 }, async (t) => {
+test("chat-to-canvas actions and browser actions share state and stream live updates", { timeout: 10000 }, async (t) => {
   const lab = createPulseLab();
   t.after(() => lab.dispose());
   const { url } = await lab.options.open({ instanceId: "shared" });
@@ -148,4 +148,114 @@ test("HTTP assets and malformed/unauthorized requests", async (t) => {
   const state = await (await post('{"action":"get_state"}')).json();
   assert.equal(state.attempts, 0);
   assert.equal(state.scenario, "steady");
+});
+
+test("canvas-to-chat sends only an explicit, instance-scoped synthetic snapshot", async (t) => {
+  const messages = [];
+  const lab = createPulseLab({
+    sendMessage: async (message) => { messages.push(message); return "message-id"; },
+  });
+  t.after(() => lab.dispose());
+  const { url } = await lab.options.open({ instanceId: "chat-one" });
+  await lab.options.open({ instanceId: "chat-two" });
+  const agent = (name, instanceId = "chat-one", input) =>
+    lab.options.actions.find((action) => action.name === name).handler({ instanceId, input });
+  await fetch(`${url}action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: '{"action":"take_reading"}',
+  });
+  await agent("set_scenario", "chat-two", { scenario: "elevated" });
+  await agent("take_reading", "chat-two");
+  assert.deepEqual(messages, []);
+
+  const ask = () => fetch(`${url}chat`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  });
+  const before = await agent("get_state");
+  const sent = await ask();
+  assert.equal(sent.status, 202);
+  assert.match((await sent.json()).message, /Switch to chat/);
+  assert.equal(messages.length, 1);
+  assert.equal(messages[0].mode, "enqueue");
+  assert.match(messages[0].prompt, /canvas instance "chat-one"/);
+  assert.match(messages[0].prompt, /Do not diagnose, give medical advice, modify files, or change canvas state/);
+  const snapshot = (message) => JSON.parse(message.prompt.split("\n\n")[1]);
+  assert.deepEqual(snapshot(messages[0]), before);
+  assert.equal(snapshot(messages[0]).history[0].source, "human");
+  assert.deepEqual(await agent("get_state"), before);
+
+  await agent("set_scenario", "chat-one", { scenario: "motion" });
+  await agent("take_reading");
+  assert.equal(messages.length, 1);
+  assert.equal((await ask()).status, 202);
+  assert.match(snapshot(messages[1]).history[0].error, /motion artifact/);
+  assert.equal(snapshot(messages[1]).history[0].values, null);
+  await agent("reset");
+  assert.equal((await ask()).status, 202);
+  assert.deepEqual(snapshot(messages[2]).history, []);
+  assert.equal(snapshot(messages[2]).attempts, 0);
+  assert.equal((await agent("get_state", "chat-two")).scenario, "elevated");
+});
+
+test("canvas-to-chat rejects malformed and cross-site requests without sending", async (t) => {
+  let sends = 0;
+  const lab = createPulseLab({ sendMessage: async () => { sends += 1; } });
+  t.after(() => lab.dispose());
+  const { url } = await lab.options.open({ instanceId: "chat-http" });
+  const post = (body, headers = { "Content-Type": "application/json" }) =>
+    fetch(`${url}chat`, { method: "POST", headers, body });
+  assert.equal((await fetch(`${url}chat`)).status, 404);
+  assert.equal((await fetch(new URL("/chat", url), {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  })).status, 404);
+  assert.equal((await post("{}",
+    { "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" })).status, 403);
+  assert.equal((await post("{}", { "Content-Type": "text/plain" })).status, 415);
+  for (const body of ["{", "null", "[]", "1", '""', '{"prompt":"custom"}',
+    '{"state":{"scenario":"elevated"}}', '{"__proto__":{}}']) {
+    assert.equal((await post(body)).status, 400);
+  }
+  assert.equal((await post(" ".repeat(1100))).status, 413);
+  assert.equal(sends, 0);
+
+  const offline = createPulseLab();
+  t.after(() => offline.dispose());
+  const { url: offlineUrl } = await offline.options.open({ instanceId: "offline" });
+  const unavailable = await fetch(`${offlineUrl}chat`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  });
+  assert.equal(unavailable.status, 503);
+  assert.match((await unavailable.json()).error, /Copilot chat is unavailable/);
+});
+
+test("canvas-to-chat handles pending sends, failures, and explicit retries", { timeout: 10000 }, async (t) => {
+  const started = Promise.withResolvers();
+  const delivery = Promise.withResolvers();
+  let sends = 0;
+  const lab = createPulseLab({
+    sendMessage: async () => {
+      sends += 1;
+      if (sends === 1) {
+        started.resolve();
+        return delivery.promise;
+      }
+      return "message-id";
+    },
+  });
+  t.after(() => lab.dispose());
+  const { url } = await lab.options.open({ instanceId: "chat-pending" });
+  const ask = () => fetch(`${url}chat`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  });
+  const first = ask();
+  await started.promise;
+  assert.equal((await ask()).status, 409);
+  assert.equal(sends, 1);
+  delivery.reject(new Error("Internal session failure details"));
+  const failed = await first;
+  assert.equal(failed.status, 502);
+  assert.equal((await failed.json()).error, "Could not confirm delivery to Copilot chat.");
+  assert.equal((await ask()).status, 202);
+  assert.equal(sends, 2);
 });
